@@ -205,7 +205,11 @@ io.on("connection", function(socket) {
     console.log("player hits with: " + playerCards);
     var numericSums = [0, 0];
     var playerBusted = false;
-    playerCards.push(dealHit());
+    if (!playerBusted) {
+      playerCards.push(dealHit());
+    } else {
+      //player already busted. let user know hit/stay are not valid until next deal
+    }
 
     numericSums = addUpCards(playerCards);
     playerBusted = isBust(numericSums);
