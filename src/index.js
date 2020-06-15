@@ -184,8 +184,9 @@ io.on("connection", function(socket) {
     if (dealCount > 6) {
       //standard single deck 1 player max deal count
       //shuffle
-      cardsDealt.fill(0, 0, 51);
+      cardsDealt.fill(0, 0, 52);
       console.log("initialized cardsDealt: " + cardsDealt);
+      dealCount = 0;
     }
 
     dealerCards = dealCards();
