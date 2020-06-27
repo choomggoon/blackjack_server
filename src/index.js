@@ -7,6 +7,9 @@ var server = app.listen(8080, function() {
   console.log("listening to request on port 8080");
 });
 
+var Player = require("./Player");
+var Dealer = require("./Dealer");
+
 //BlackJack settings
 var cards = [
   "AH",
@@ -66,11 +69,130 @@ var cardsDealt = new Array(52).fill(0);
 //var player_cash = 100;
 //var minimum_bet = 10;
 var dealCount = 0;
+var players = {};
+var dealer = new Dealer();
 
-var dealerCards = ["", ""];
-var playerCards = ["", ""];
 var cardSetAsDealt = false;
 var cardIdx = 0;
+// var playersCardsArray = [];
+
+// Socket setup
+var io = socket(server);
+var connectCounter = 0;
+// always start with player0
+var playerWithOption = 0;
+
+io.on("connection", function(socket) {
+  var sessionId = connectCounter;
+  console.log("client connected: " + socket.handshake.address);
+  console.log("with sessionId: " + sessionId);
+  players[sessionId] = new Player();
+  connectCounter++;
+  players.length = connectCounter;
+  socket.emit("handshake", sessionId);
+
+  players[sessionId].playState = "sat";
+
+  //**** deal cards to already connected players ****
+  //**** ignore players who joined after other   ****
+  //**** players already have hands dealt        ****//
+  dealCount++;
+  console.log("deal limit: ", 6 - connectCounter);
+  if (dealCount > 6 - connectCounter) {
+    //standard single deck 1 player max deal count
+    //shuffle
+    cardsDealt.fill(0, 0, 52);
+    console.log(
+      "initialized cardsDealt, dealCount at: " +
+        dealCount +
+        " and number of players: " +
+        connectCounter
+    );
+    dealCount = 0;
+  }
+
+  dealInitialHands();
+
+  // io.sockets.emit("deal", { hiddenDealerCards , players });
+  updateTable(playerWithOption);
+  //**** end deal action. TODO: move this out in a function ****//
+
+  socket.on("hit", function() {
+    console.log("***Player" + sessionId + " chooses to HIT***");
+    console.log(
+      "player" + sessionId + " hits with: " + players[sessionId].hand
+    );
+
+    console.log(
+      "@@@@@@@@@@@ sessionId: " +
+        sessionId +
+        " playerWithOption: " +
+        playerWithOption
+    );
+    if (!players[sessionId].busted && sessionId === playerWithOption) {
+      players[sessionId].hand.push(dealHit());
+    } else {
+      //player already busted or is not his/her turn yet. let user know hit/stay are not valid.
+    }
+
+    players[sessionId].numericSum = addUpCards(players[sessionId].hand);
+    console.log(
+      "player" + sessionId + "s hand sum: " + players[sessionId].numericSum
+    );
+    players[sessionId].busted = isBust(players[sessionId].numericSum);
+
+    if (players[sessionId].busted) {
+      console.log("player" + sessionId + " busts!");
+      players[sessionId].playState = "done";
+      if (players.length - 1 > playerWithOption) {
+        playerWithOption++;
+      } else {
+        // because third base can bust and give options to dealer
+        playerWithOption = -1;
+      }
+    }
+    console.log(
+      "player" +
+        sessionId +
+        " now has: " +
+        players[sessionId].hand +
+        ". And current player with option is: " +
+        playerWithOption
+    );
+    updateTable(playerWithOption);
+    console.log("***Player" + sessionId + "'s HIT action processed***");
+  });
+
+  socket.on("stay", function() {
+    console.log("***Player" + sessionId + " chooses to stay***");
+    if (players.length - 1 > playerWithOption) {
+      console.log("why not update?. playerWithOption: " + playerWithOption);
+      playerWithOption++;
+      console.log("after increment. playerWithOption: " + playerWithOption);
+    } else {
+      // last player stays
+      playerWithOption = -1;
+    }
+    players[sessionId].playState = "done";
+
+    updateTable(playerWithOption);
+    console.log("***Player" + sessionId + "s stay processed***");
+  });
+
+  socket.on("rePlay", function() {
+    dealInitialHands();
+    updateTable(playerWithOption);
+  });
+
+  socket.on("disconnect", function() {
+    console.log("client disconnected:" + socket.handshake.address);
+    console.log("with sessionId: " + sessionId);
+    // io.sockets.emit("disconnect");
+    delete players[sessionId];
+    io.sockets.emit("disconnect", sessionId);
+    connectCounter--;
+  });
+});
 
 function sleep(millisecondsToWait) {
   var now = new Date().getTime();
@@ -155,93 +277,104 @@ function isBust(numericSums) {
   }
 }
 
-function whoWon(playerCards, dealerCards) {
-  var dealerSum = addUpCards(dealerCards);
-  var dealerBusted = isBust(dealerSum);
-  var playerSum = addUpCards(playerCards);
+// function whoWon(playerCards, dealer.hand){
+//   var dealerSum = addUpCards(dealer.hand);
+//   var dealerBusted = isBust(dealerSum);
+//   var playerSum = addUpCards(playerCards);
+//
+//   if(dealerBusted){
+//     return "Player";
+//   }
+//
+//   if ( dealerSum[0] > playerSum[0] && dealerSum[1] > playerSum[1]) {
+//     return "Dealer";
+//   } else if (dealerSum[0] === playerSum[0] && dealerSum[1] === playerSum[1]) {
+//     return "push";
+//   } else {
+//     return "Player";
+//   }
+// }
 
-  if (dealerBusted) {
-    return "Player";
+function isBlackJack(hand) {
+  // TODO: implement later
+}
+
+function dealInitialHands() {
+  console.log("========================FRESH TABLE========================");
+  dealer.hand = dealCards();
+  for (var i = 0; i < connectCounter; i++) {
+    if (players[i].playState === "sat") {
+      players[i].hand = [...dealCards()];
+      players[i].playState = "dealt";
+      // if BlackJack
+      if (isBlackJack(players[i].hand)) {
+        // mark player as won and disable actions. TODO: insurance action ignored here when dealer shows ace.
+        players[i].playState = "done"; // TODO: winnings should be 1.5x
+      }
+    }
   }
 
-  if (dealerSum[0] > playerSum[0] && dealerSum[1] > playerSum[1]) {
-    return "Dealer";
-  } else if (dealerSum[0] === playerSum[0] && dealerSum[1] === playerSum[1]) {
-    return "push";
+  console.log("cards dealt: " + cardsDealt);
+  for (var k = 0; k < connectCounter; k++) {
+    console.log("players[", k, "].hand: ", players[k].hand);
+  }
+  console.log("dealer.hand: " + dealer.hand);
+  console.log("dealCount: " + dealCount);
+  console.log("========================HANDS DEALT========================");
+}
+
+function updateTable(playerWithOption) {
+  var dealerCards = ["", ""];
+  if (playerWithOption >= 0) {
+    dealerCards = [...dealer.hand];
+    dealerCards[0] = "HIDDEN";
   } else {
-    return "Player";
+    dealerCards = [...dealer.hand];
+  }
+
+  io.sockets.emit("updateTable", {
+    dealerHand: dealerCards,
+    players: players,
+    playerWithOption: playerWithOption
+  });
+  if (playerWithOption === -1) {
+    doDealerAction();
   }
 }
 
-// Socket setup
-var io = socket(server);
+function doDealerAction() {
+  // dealer stays on soft 17
+  // dealer continues to hit until reaching 21 or higher
+  var dealerBusted = false;
+  var dealerSum = addUpCards(dealer.hand);
 
-io.on("connection", function(socket) {
-  console.log("made socket connection", socket.id);
-
-  socket.on("deal", function() {
-    dealCount++;
-    if (dealCount > 6) {
-      //standard single deck 1 player max deal count
-      //shuffle
-      cardsDealt.fill(0, 0, 52);
-      console.log("initialized cardsDealt: " + cardsDealt);
-      dealCount = 0;
+  sleep(2000);
+  // keep dealing cards
+  while (!dealerBusted) {
+    if (dealerSum[0] >= 17 || dealerSum[1] >= 17) {
+      break;
     }
+    dealer.hand.push(dealHit());
+    dealerSum = addUpCards(dealer.hand);
+    dealerBusted = isBust(dealerSum);
+    console.log("dealer cards after hit: " + dealer.hand);
 
-    dealerCards = dealCards();
-    playerCards = dealCards();
-    var hiddenDealerCards = [...dealerCards];
-    hiddenDealerCards[0] = "HIDDEN";
+    updateTable(-2); // so we don't call doDealerAction again
+    sleep(2000);
+  }
+  updateTable(-3); // game over
+  resetTable();
+  // var winner = whoWon(players[sessionId].hand, dealer.hand);
+  // announce winner and resset states for players
+  // io.sockets.emit("announceWinner", winner);
+}
 
-    io.sockets.emit("deal", { hiddenDealerCards, playerCards });
-    console.log("cards dealt: " + cardsDealt);
-    console.log("playerCards: " + playerCards);
-    console.log("dealerCards: " + dealerCards);
-    console.log("dealCount: " + dealCount);
-  });
-
-  socket.on("hit", function() {
-    console.log("player hits with: " + playerCards);
-    var numericSums = [0, 0];
-    var playerBusted = false;
-    if (!playerBusted) {
-      playerCards.push(dealHit());
-    } else {
-      //player already busted. let user know hit/stay are not valid until next deal
-    }
-
-    numericSums = addUpCards(playerCards);
-    playerBusted = isBust(numericSums);
-    io.sockets.emit("hit", { playerCards, playerBusted });
-    if (playerBusted) {
-      console.log("player busts!");
-    }
-    console.log("player now has: " + playerCards);
-  });
-
-  socket.on("stay", function() {
-    io.sockets.emit("showDealerHidden", dealerCards);
-
-    // dealer stays on soft 17
-    // dealer continues to hit until reaching 21 or higher
-    var dealerBusted = false;
-    var dealerSum = addUpCards(dealerCards);
-    // keep dealing cards
-    while (!dealerBusted) {
-      if (dealerSum[0] >= 17 || dealerSum[1] >= 17) {
-        break;
-      }
-      dealerCards.push(dealHit());
-      dealerSum = addUpCards(dealerCards);
-      dealerBusted = isBust(dealerSum);
-      console.log("dealer cards after hit: " + dealerCards);
-      io.sockets.emit("dealerHit", dealerCards);
-      sleep(2000);
-    }
-
-    var winner = whoWon(playerCards, dealerCards);
-
-    io.sockets.emit("announceWinner", winner);
-  });
-});
+function resetTable() {
+  playerWithOption = 0;
+  dealer = new Dealer();
+  for (var i = 0; i < connectCounter; i++) {
+    players[i].playState = "sat";
+    players[i].hand = ["", ""];
+    players[i].numericSum = [0, 0];
+  }
+}
